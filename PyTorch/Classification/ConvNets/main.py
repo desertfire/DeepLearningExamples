@@ -389,7 +389,7 @@ def prepare_for_training(args, model_args, model_arch):
 
         def _worker_init_fn(id):
             # Worker process should inherit its affinity from parent
-            affinity = os.sched_getaffinity(0) 
+            affinity = os.sched_getaffinity(0)
             print(f"Process {args.local_rank} Worker {id} set affinity to: {affinity}")
 
             np.random.seed(seed=args.seed + args.local_rank + id)
@@ -498,6 +498,7 @@ def prepare_for_training(args, model_args, model_arch):
         divide_loss=batch_size_multiplier,
         ts_script=args.jit == "script",
         ltc=args.ltc,
+        gpu_id = args.gpu
     )
 
     # Create data loaders and optimizers as needed
@@ -531,6 +532,7 @@ def prepare_for_training(args, model_args, model_arch):
         memory_format=memory_format,
         prefetch_factor=args.prefetch,
         ltc=args.ltc,
+        gpu_id=args.gpu,
     )
     if args.mixup != 0.0:
         train_loader = MixUpWrapper(args.mixup, train_loader)

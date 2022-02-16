@@ -338,24 +338,24 @@ def fast_collate(memory_format, batch):
     return tensor, targets
 
 
-def expand(num_classes, dtype, tensor, ltc):
+def expand(num_classes, dtype, tensor, ltc, gpu_id=None):
     e = torch.zeros(
-        tensor.size(0), num_classes, dtype=dtype, device="lazy" if ltc else "cuda"
+        tensor.size(0), num_classes, dtype=dtype, device=torch.device("lazy" if ltc else "cuda", gpu_id)
     )
     e = e.scatter(1, tensor.unsqueeze(1), 1.0)
     return e
 
 
 class PrefetchedWrapper(object):
-    def prefetched_loader(loader, num_classes, one_hot, ltc):
+    def prefetched_loader(loader, num_classes, one_hot, ltc, gpu_id=None):
         mean = (
             torch.tensor([0.485 * 255, 0.456 * 255, 0.406 * 255])
-            .to("lazy" if ltc else "cuda")
+            .to(torch.device("lazy" if ltc else "cuda", gpu_id))
             .view(1, 3, 1, 1)
         )
         std = (
             torch.tensor([0.229 * 255, 0.224 * 255, 0.225 * 255])
-            .to("lazy" if ltc else "cuda")
+            .to(torch.device("lazy" if ltc else "cuda", gpu_id))
             .view(1, 3, 1, 1)
         )
 
@@ -365,15 +365,15 @@ class PrefetchedWrapper(object):
         for next_input, next_target in loader:
             with torch.cuda.stream(stream):
                 if ltc:
-                    next_input = next_input.to(device="lazy")
-                    next_target = next_target.to(device="lazy")
+                    next_input = next_input.to(device=torch.device("lazy", gpu_id))
+                    next_target = next_target.to(device=torch.device("lazy", gpu_id))
                 else:
                     next_input = next_input.cuda(non_blocking=True)
                     next_target = next_target.cuda(non_blocking=True)
 
                 next_input = next_input.float()
                 if one_hot:
-                    next_target = expand(num_classes, torch.float, next_target, ltc)
+                    next_target = expand(num_classes, torch.float, next_target, ltc, gpu_id)
 
                 next_input = next_input.sub_(mean).div_(std)
 
@@ -388,12 +388,13 @@ class PrefetchedWrapper(object):
 
         yield input, target
 
-    def __init__(self, dataloader, start_epoch, num_classes, one_hot, ltc):
+    def __init__(self, dataloader, start_epoch, num_classes, one_hot, ltc, gpu_id):
         self.dataloader = dataloader
         self.epoch = start_epoch
         self.one_hot = one_hot
         self.num_classes = num_classes
         self.ltc = ltc
+        self.gpu_id = gpu_id
 
     def __iter__(self):
         if self.dataloader.sampler is not None and isinstance(
@@ -403,7 +404,7 @@ class PrefetchedWrapper(object):
             self.dataloader.sampler.set_epoch(self.epoch)
         self.epoch += 1
         return PrefetchedWrapper.prefetched_loader(
-            self.dataloader, self.num_classes, self.one_hot, self.ltc
+            self.dataloader, self.num_classes, self.one_hot, self.ltc, self.gpu_id
         )
 
     def __len__(self):
@@ -424,6 +425,7 @@ def get_pytorch_train_loader(
     prefetch_factor=2,
     memory_format=torch.contiguous_format,
     ltc=False,
+    gpu_id=None,
 ):
     interpolation = {"bicubic": Image.BICUBIC, "bilinear": Image.BILINEAR}[
         interpolation
@@ -459,7 +461,7 @@ def get_pytorch_train_loader(
     )
 
     return (
-        PrefetchedWrapper(train_loader, start_epoch, num_classes, one_hot, ltc),
+        PrefetchedWrapper(train_loader, start_epoch, num_classes, one_hot, ltc, gpu_id),
         len(train_loader),
     )
 
@@ -477,6 +479,7 @@ def get_pytorch_val_loader(
     memory_format=torch.contiguous_format,
     prefetch_factor=2,
     ltc=False,
+    gpu_id=None,
 ):
     interpolation = {"bicubic": Image.BICUBIC, "bilinear": Image.BILINEAR}[
         interpolation
@@ -515,7 +518,7 @@ def get_pytorch_val_loader(
         prefetch_factor=prefetch_factor,
     )
 
-    return PrefetchedWrapper(val_loader, 0, num_classes, one_hot, ltc), len(val_loader)
+    return PrefetchedWrapper(val_loader, 0, num_classes, one_hot, ltc, gpu_id), len(val_loader)
 
 
 class SynteticDataLoader(object):

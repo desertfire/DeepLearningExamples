@@ -58,17 +58,19 @@ class Executor:
         divide_loss: int = 1,
         ts_script: bool = False,
         ltc: bool = False,
+        gpu_id: int = None,
     ):
         assert not (amp and scaler is None), "Gradient Scaler is needed for AMP"
 
         def xform(m: nn.Module) -> nn.Module:
             if ltc:
-                m = m.to(device="lazy")
+                m = m.to(torch.device("lazy", gpu_id))
             elif cuda:
                 m = m.cuda()
             m.to(memory_format=memory_format)
             return m
 
+        self.gpu_id = gpu_id
         self.model = xform(model)
         if ts_script:
             self.model = torch.jit.script(self.model)
@@ -217,6 +219,7 @@ def train(
     prof=-1,
     step=0,
     ltc=False,
+    gpu_id=None,
 ):
     interrupted = False
 
@@ -232,7 +235,7 @@ def train(
         loss = train_step(input, target, step=step + i)
 
         if ltc:
-            ltm.mark_step()
+            ltm.mark_step(torch.device("lazy", gpu_id))
 
         it_time = time.time() - end
 
@@ -263,7 +266,7 @@ def train(
     return interrupted
 
 
-def validate(infer_fn, val_loader, log_fn, prof=-1, with_loss=True, ltc=False):
+def validate(infer_fn, val_loader, log_fn, prof=-1, with_loss=True, ltc=False, gpu_id=None):
     top1 = log.AverageMeter()
     # switch to evaluate mode
 
@@ -282,7 +285,7 @@ def validate(infer_fn, val_loader, log_fn, prof=-1, with_loss=True, ltc=False):
 
 
         if ltc:
-            ltm.mark_step()
+            ltm.mark_step(torch.device("lazy", gpu_id))
 
         with torch.no_grad():
             prec1, prec5 = utils.accuracy(output.data, target, topk=(1, 5))
@@ -389,6 +392,7 @@ def train_loop(
                     prof=prof,
                     step=epoch * train_loader_len,
                     ltc=ltc,
+                    gpu_id=trainer.executor.gpu_id,
                 )
 
             if not skip_validation:
@@ -407,6 +411,7 @@ def train_loop(
                         val_metrics[k].log,
                         prof=prof,
                         ltc=ltc,
+                        gpu_id=trainer.executor.gpu_id,
                     )
 
                     if k == "val":
