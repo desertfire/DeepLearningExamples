@@ -27,7 +27,8 @@ platform:
         prefetch: 4
         gpu_affinity: socket_unique_contiguous
     DGXA100:
-        workers: 10
+        # 8 works well for the default AWS config
+        workers: 8
         prefetch: 4
         gpu_affinity: socket_unique_contiguous
 

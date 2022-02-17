@@ -43,8 +43,9 @@ from .logger import TrainingMetrics, ValidationMetrics
 from .models.common import EMA
 
 import lazy_tensor_core
-lazy_tensor_core._LAZYC._ltc_init_ts_backend()
 import lazy_tensor_core.core.lazy_model as ltm
+import lazy_tensor_core.debug.metrics as metrics
+lazy_tensor_core._LAZYC._ltc_init_ts_backend()
 
 class Executor:
     def __init__(
@@ -149,6 +150,7 @@ class Trainer:
         optimizer: torch.optim.Optimizer,
         grad_acc_steps: int,
         ema: Optional[float] = None,
+        ltc: bool = False,
     ):
         self.executor = executor
         self.optimizer = optimizer
@@ -158,6 +160,7 @@ class Trainer:
             self.ema_executor = deepcopy(self.executor)
             self.ema = EMA(ema, self.ema_executor.model)
             self.use_ema = True
+        self.ltc = ltc
 
         self.optimizer.zero_grad(set_to_none=True)
         self.steps_since_update = 0
@@ -186,6 +189,8 @@ class Trainer:
             self.optimizer.zero_grad()
             self.steps_since_update = 0
 
+        if self.ltc:
+            ltm.wait_device_ops()
         torch.cuda.synchronize()
 
         if self.use_ema:
@@ -228,6 +233,10 @@ def train(
     data_iter = enumerate(train_loader)
 
     for i, (input, target) in data_iter:
+        if ltc:
+            input = input.to(torch.device("lazy", gpu_id))
+            target = target.to(torch.device("lazy", gpu_id))
+
         bs = input.size(0)
         lr = lr_scheduler(i)
         data_time = time.time() - end
@@ -251,7 +260,7 @@ def train(
             data_time=data_time,
             compute_time=it_time - data_time,
             lr=lr,
-            loss=reduced_loss.item(),
+            # loss=reduced_loss.item(),
         )
 
         end = time.time()
@@ -275,6 +284,10 @@ def validate(infer_fn, val_loader, log_fn, prof=-1, with_loss=True, ltc=False, g
     data_iter = enumerate(val_loader)
 
     for i, (input, target) in data_iter:
+        if ltc:
+            input = input.to(torch.device("lazy", gpu_id))
+            target = target.to(torch.device("lazy", gpu_id))
+
         bs = input.size(0)
         data_time = time.time() - end
 
@@ -282,7 +295,6 @@ def validate(infer_fn, val_loader, log_fn, prof=-1, with_loss=True, ltc=False, g
             loss, output = infer_fn(input, target)
         else:
             output = infer_fn(input)
-
 
         if ltc:
             ltm.mark_step(torch.device("lazy", gpu_id))
@@ -309,6 +321,8 @@ def validate(infer_fn, val_loader, log_fn, prof=-1, with_loss=True, ltc=False, g
         if with_loss:
             infer_result["loss"] = (reduced_loss.item(), bs)
 
+        if ltc:
+            ltm.wait_device_ops()
         torch.cuda.synchronize()
 
         it_time = time.time() - end
@@ -462,5 +476,7 @@ def train_loop(
 
             if interrupted:
                 break
+
+    #print(metrics.metrics_report())
 
 # }}}

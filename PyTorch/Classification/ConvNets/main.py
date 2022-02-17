@@ -531,7 +531,6 @@ def prepare_for_training(args, model_args, model_arch):
         _worker_init_fn=_worker_init_fn,
         memory_format=memory_format,
         prefetch_factor=args.prefetch,
-        ltc=args.ltc,
         gpu_id=args.gpu,
     )
     if args.mixup != 0.0:
@@ -601,6 +600,7 @@ def prepare_for_training(args, model_args, model_arch):
         optimizer,
         grad_acc_steps=batch_size_multiplier,
         ema=args.use_ema,
+        ltc=args.ltc,
     )
 
     if (args.use_ema is not None) and (model_state_ema is not None):
