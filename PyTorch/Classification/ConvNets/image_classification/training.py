@@ -68,7 +68,7 @@ class Executor:
                 m = m.to(torch.device("lazy", gpu_id))
             elif cuda:
                 m = m.cuda()
-            m.to(memory_format=memory_format)
+                m.to(memory_format=memory_format)
             return m
 
         self.gpu_id = gpu_id
@@ -189,10 +189,6 @@ class Trainer:
             self.optimizer.zero_grad()
             self.steps_since_update = 0
 
-        if self.ltc:
-            ltm.wait_device_ops()
-        torch.cuda.synchronize()
-
         if self.use_ema:
             self.ema(self.executor.model, step=step)
 
@@ -227,26 +223,24 @@ def train(
     gpu_id=None,
 ):
     interrupted = False
-
-    end = time.time()
+    bs = 0
 
     data_iter = enumerate(train_loader)
+
+    start = time.time()
 
     for i, (input, target) in data_iter:
         if ltc:
             input = input.to(torch.device("lazy", gpu_id))
             target = target.to(torch.device("lazy", gpu_id))
 
-        bs = input.size(0)
+        bs += input.size(0)
         lr = lr_scheduler(i)
-        data_time = time.time() - end
 
         loss = train_step(input, target, step=step + i)
 
         if ltc:
             ltm.mark_step(torch.device("lazy", gpu_id))
-
-        it_time = time.time() - end
 
         with torch.no_grad():
             if torch.distributed.is_initialized():
@@ -254,16 +248,6 @@ def train(
             else:
                 reduced_loss = loss.detach()
 
-        log_fn(
-            compute_ips=utils.calc_ips(bs, it_time - data_time),
-            total_ips=utils.calc_ips(bs, it_time),
-            data_time=data_time,
-            compute_time=it_time - data_time,
-            lr=lr,
-            # loss=reduced_loss.item(),
-        )
-
-        end = time.time()
         if prof > 0 and (i + 1 >= prof):
             time.sleep(5)
             break
@@ -271,6 +255,18 @@ def train(
             time.sleep(5)
             interrupted = True
             break
+
+    if ltc:
+        ltm.wait_device_ops()
+    torch.cuda.synchronize()
+
+    end = time.time()
+
+    log_fn(
+        total_ips=utils.calc_ips(bs, end - start),
+        lr=lr,
+        loss=reduced_loss.item(),
+    )
 
     return interrupted
 
