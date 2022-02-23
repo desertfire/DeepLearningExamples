@@ -368,6 +368,12 @@ def add_parser_arguments(parser, skip_arch=False):
         help="Dump LTC summary report",
     )
 
+    parser.add_argument(
+        "--sync_every_iter",
+        action="store_true",
+        help="Synchronize after each iteration",
+    )
+
 def prepare_for_training(args, model_args, model_arch):
     args.distributed = False
     if "WORLD_SIZE" in os.environ:
@@ -612,6 +618,8 @@ def prepare_for_training(args, model_args, model_arch):
         grad_acc_steps=batch_size_multiplier,
         ema=args.use_ema,
         ltc=args.ltc,
+        gpu_id=args.gpu,
+        sync_every_iter=args.sync_every_iter,
     )
 
     if (args.use_ema is not None) and (model_state_ema is not None):
@@ -665,6 +673,7 @@ def main(args, model_args, model_arch):
         checkpoint_filename=args.checkpoint_filename,
         ltc=args.ltc,
         ltc_summary=args.ltc_summary,
+        sync_every_iter=args.sync_every_iter,
     )
     exp_duration = time.time() - exp_start_time
     if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:

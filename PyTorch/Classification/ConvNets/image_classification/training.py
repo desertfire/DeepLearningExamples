@@ -149,6 +149,8 @@ class Trainer:
         grad_acc_steps: int,
         ema: Optional[float] = None,
         ltc: bool = False,
+        gpu_id: int = None,
+        sync_every_iter: bool = False,
     ):
         self.executor = executor
         self.optimizer = optimizer
@@ -159,6 +161,8 @@ class Trainer:
             self.ema = EMA(ema, self.ema_executor.model)
             self.use_ema = True
         self.ltc = ltc
+        self.gpu_id = gpu_id
+        self.sync_every_iter = sync_every_iter
 
         self.optimizer.zero_grad(set_to_none=True)
         self.steps_since_update = 0
@@ -186,6 +190,14 @@ class Trainer:
                 self.optimizer.step()
             self.optimizer.zero_grad()
             self.steps_since_update = 0
+
+        if self.ltc:
+            ltm.mark_step(torch.device("lazy", self.gpu_id))
+
+        if self.sync_every_iter:
+            if self.ltc:
+                ltm.wait_device_ops()
+            torch.cuda.synchronize()
 
         if self.use_ema:
             self.ema(self.executor.model, step=step)
@@ -219,52 +231,84 @@ def train(
     step=0,
     ltc=False,
     gpu_id=None,
+    sync_every_iter=False,
 ):
     interrupted = False
-    bs = 0
-
+    end = time.time()
     data_iter = enumerate(train_loader)
 
-    start = time.time()
+    if sync_every_iter:
+        for i, (input, target) in data_iter:
+            if ltc:
+                input = input.to(torch.device("lazy", gpu_id))
+                target = target.to(torch.device("lazy", gpu_id))
 
-    for i, (input, target) in data_iter:
+            bs = input.size(0)
+            lr = lr_scheduler(i)
+            data_time = time.time() - end
+            loss = train_step(input, target, step=step + i)
+            it_time = time.time() - end
+
+            with torch.no_grad():
+                if torch.distributed.is_initialized():
+                    reduced_loss = utils.reduce_tensor(loss.detach())
+                else:
+                    reduced_loss = loss.detach()
+
+            log_fn(
+                compute_ips=utils.calc_ips(bs, it_time - data_time),
+                total_ips=utils.calc_ips(bs, it_time),
+                data_time=data_time,
+                compute_time=it_time - data_time,
+                lr=lr,
+                loss=reduced_loss.item(),
+            )
+            end = time.time()
+
+            if prof > 0 and (i + 1 >= prof):
+                time.sleep(5)
+                break
+
+            if ((i + 1) % 20 == 0) and timeout_handler.interrupted:
+                time.sleep(5)
+                interrupted = True
+                break
+
+    else: # not sync_every_iter
+        reduced_loss = None
+        bs = 0
+        for i, (input, target) in data_iter:
+            if ltc:
+                input = input.to(torch.device("lazy", gpu_id))
+                target = target.to(torch.device("lazy", gpu_id))
+
+            bs += input.size(0)
+            lr = lr_scheduler(i)
+            loss = train_step(input, target, step=step + i)
+
+            with torch.no_grad():
+                if torch.distributed.is_initialized():
+                    reduced_loss = utils.reduce_tensor(loss.detach())
+                else:
+                    reduced_loss = loss.detach()
+
+            if prof > 0 and (i + 1 >= prof):
+                break
+
+            if ((i + 1) % 20 == 0) and timeout_handler.interrupted:
+                interrupted = True
+                break
+
         if ltc:
-            input = input.to(torch.device("lazy", gpu_id))
-            target = target.to(torch.device("lazy", gpu_id))
+            ltm.wait_device_ops()
+        torch.cuda.synchronize()
 
-        bs += input.size(0)
-        lr = lr_scheduler(i)
-
-        loss = train_step(input, target, step=step + i)
-
-        if ltc:
-            ltm.mark_step(torch.device("lazy", gpu_id))
-
-        with torch.no_grad():
-            if torch.distributed.is_initialized():
-                reduced_loss = utils.reduce_tensor(loss.detach())
-            else:
-                reduced_loss = loss.detach()
-
-        if prof > 0 and (i + 1 >= prof):
-            time.sleep(5)
-            break
-        if ((i + 1) % 20 == 0) and timeout_handler.interrupted:
-            time.sleep(5)
-            interrupted = True
-            break
-
-    if ltc:
-        ltm.wait_device_ops()
-    torch.cuda.synchronize()
-
-    end = time.time()
-
-    log_fn(
-        total_ips=utils.calc_ips(bs, end - start),
-        lr=lr,
-        loss=reduced_loss.item(),
-    )
+        total_time = time.time() - end
+        log_fn(
+            total_ips=utils.calc_ips(bs, total_time),
+            lr=lr,
+            loss=reduced_loss.item(),
+        )
 
     return interrupted
 
@@ -360,6 +404,7 @@ def train_loop(
     checkpoint_filename="checkpoint.pth.tar",
     ltc=False,
     ltc_summary=False,
+    sync_every_iter=False,
 ):
     train_metrics = TrainingMetrics(logger)
     val_metrics = {
@@ -402,6 +447,7 @@ def train_loop(
                     step=epoch * train_loader_len,
                     ltc=ltc,
                     gpu_id=trainer.executor.gpu_id,
+                    sync_every_iter=sync_every_iter,
                 )
 
             if not skip_validation:
