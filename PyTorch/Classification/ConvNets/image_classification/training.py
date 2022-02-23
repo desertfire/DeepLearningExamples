@@ -44,7 +44,7 @@ from .models.common import EMA
 
 import lazy_tensor_core
 import lazy_tensor_core.core.lazy_model as ltm
-import lazy_tensor_core.debug.metrics as metrics
+import lazy_tensor_core.debug.metrics as ltc_metrics
 lazy_tensor_core._LAZYC._ltc_init_ts_backend()
 
 class Executor:
@@ -361,6 +361,7 @@ def train_loop(
     checkpoint_dir="./",
     checkpoint_filename="checkpoint.pth.tar",
     ltc=False,
+    ltc_summary=False,
 ):
     train_metrics = TrainingMetrics(logger)
     val_metrics = {
@@ -473,6 +474,7 @@ def train_loop(
             if interrupted:
                 break
 
-    #print(metrics.metrics_report())
+    if ltc and ltc_summary:
+        print(ltc_metrics.metrics_report())
 
 # }}}

@@ -360,6 +360,12 @@ def add_parser_arguments(parser, skip_arch=False):
         help="Run with Lazy Tensor",
     )
 
+    parser.add_argument(
+        "--ltc_summary",
+        action="store_true",
+        help="Dump LTC summary report",
+    )
+
 def prepare_for_training(args, model_args, model_arch):
     args.distributed = False
     if "WORLD_SIZE" in os.environ:
@@ -653,6 +659,7 @@ def main(args, model_args, model_arch):
         checkpoint_dir=args.workspace,
         checkpoint_filename=args.checkpoint_filename,
         ltc=args.ltc,
+        ltc_summary=args.ltc_summary,
     )
     exp_duration = time.time() - exp_start_time
     if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
