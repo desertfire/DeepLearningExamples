@@ -35,6 +35,8 @@ import argparse
 import random
 from copy import deepcopy
 
+import lazy_tensor_core
+
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 import torch.nn.parallel
@@ -492,7 +494,10 @@ def prepare_for_training(args, model_args, model_arch):
     )
 
     if args.ltc:
-        os.environ["LTC_TS_CUDA"] = '1'
+        os.environ["LTC_TS_CUDA"] = "1"
+    # Need to call this unconditionally, otherwise PrepareToExit will 
+    # throw an error at the exit
+    lazy_tensor_core._LAZYC._ltc_init_ts_backend()
 
     executor = Executor(
         model,

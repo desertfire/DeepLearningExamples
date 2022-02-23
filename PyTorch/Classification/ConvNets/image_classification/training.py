@@ -42,10 +42,8 @@ from . import utils
 from .logger import TrainingMetrics, ValidationMetrics
 from .models.common import EMA
 
-import lazy_tensor_core
 import lazy_tensor_core.core.lazy_model as ltm
 import lazy_tensor_core.debug.metrics as ltc_metrics
-lazy_tensor_core._LAZYC._ltc_init_ts_backend()
 
 class Executor:
     def __init__(
