@@ -374,6 +374,14 @@ def add_parser_arguments(parser, skip_arch=False):
         help="Synchronize after each iteration",
     )
 
+    parser.add_argument(
+        "--fuser",
+        type=str,
+        default="noopt",
+        choices=["noopt", "fuser1", "fuser2"],
+        help="noopt: no JIT, fuser1: NNC, fuser2: NVFuser",
+    )
+
 def prepare_for_training(args, model_args, model_arch):
     args.distributed = False
     if "WORLD_SIZE" in os.environ:
@@ -674,6 +682,7 @@ def main(args, model_args, model_arch):
         ltc=args.ltc,
         ltc_summary=args.ltc_summary,
         sync_every_iter=args.sync_every_iter,
+        fuser=args.fuser,
     )
     exp_duration = time.time() - exp_start_time
     if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
