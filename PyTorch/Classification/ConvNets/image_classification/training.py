@@ -87,7 +87,7 @@ class Executor:
         s = torch.cuda.Stream()
         s.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(s):
-            self.model = DDP(self.model, device_ids=[gpu_id], output_device=gpu_id)
+            self.model = DDP(self.model, device_ids=[gpu_id], output_device=gpu_id, gradient_as_bucket_view=True)
         torch.cuda.current_stream().wait_stream(s)
 
     def _fwd_bwd_fn(
