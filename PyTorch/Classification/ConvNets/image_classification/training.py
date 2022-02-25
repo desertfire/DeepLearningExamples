@@ -232,7 +232,8 @@ def train(
     ltc=False,
     gpu_id=None,
     sync_every_iter=False,
-    fuser=None,
+    fuser="noopt",
+    warmup_iters=-1,
 ):
     interrupted = False
     end = time.time()
@@ -280,8 +281,9 @@ def train(
                     interrupted = True
                     break
 
-        else: # not sync_every_iter
-            reduced_loss = None
+        else:
+            # not sync_every_iter
+            loss = None
             bs = 0
             for i, (input, target) in data_iter:
                 if ltc:
@@ -292,11 +294,13 @@ def train(
                 lr = lr_scheduler(i)
                 loss = train_step(input, target, step=step + i)
 
-                with torch.no_grad():
-                    if torch.distributed.is_initialized():
-                        reduced_loss = utils.reduce_tensor(loss.detach())
-                    else:
-                        reduced_loss = loss.detach()
+                if warmup_iters > 0 and i == warmup_iters - 1:
+                    if ltc:
+                        ltm.wait_device_ops()
+                    torch.cuda.synchronize()
+                    # Reset the timer after warmup
+                    end = time.time()
+                    bs = 0
 
                 if prof > 0 and (i + 1 >= prof):
                     break
@@ -308,6 +312,12 @@ def train(
             if ltc:
                 ltm.wait_device_ops()
             torch.cuda.synchronize()
+
+            with torch.no_grad():
+                if torch.distributed.is_initialized():
+                    reduced_loss = utils.reduce_tensor(loss.detach())
+                else:
+                    reduced_loss = loss.detach()
 
             total_time = time.time() - end
             log_fn(
@@ -411,7 +421,8 @@ def train_loop(
     ltc=False,
     ltc_summary=False,
     sync_every_iter=False,
-    fuser=None,
+    fuser="noopt",
+    warmup_iters=-1,
 ):
     train_metrics = TrainingMetrics(logger)
     val_metrics = {
@@ -456,6 +467,7 @@ def train_loop(
                     gpu_id=trainer.executor.gpu_id,
                     sync_every_iter=sync_every_iter,
                     fuser=fuser,
+                    warmup_iters=warmup_iters,
                 )
 
             if not skip_validation:
